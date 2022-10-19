@@ -18,6 +18,7 @@
     "paths": {
       "@middlewares/*": ["./src/middlewares/*"],
       "@models/*": ["./src/models/*"],
+      "@types/*": ["./src/types/*"],
       "@providers/*": ["./src/providers/*"],
       "@services/*": ["./src/services/*"],
       "@useCases/*": ["./src/useCases/*"],

@@ -1,4 +1,4 @@
-import { Contract } from '@models/contract';
+import { Contract } from '@types/contract';
 
 export interface CallDTO {
   contract: Contract;
