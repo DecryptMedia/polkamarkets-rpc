@@ -222,7 +222,8 @@ export class PolkamarketsContractProvider implements ContractProvider {
 
       let event = await Event.findOne({
         where: {
-          transactionHash: eventData.transactionHash
+          transactionHash: eventData.transactionHash,
+          logIndex: eventData.logIndex,
         }
       });
 
