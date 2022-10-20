@@ -106,7 +106,7 @@ export class PolkamarketsContractProvider implements ContractProvider {
 
   public blockRangeCacheKey(contract: string, address: string, eventName: string, filter: Object, blockRange: Object) {
     const blockRangeStr = `${blockRange['fromBlock']}-${blockRange['toBlock']}`;
-    return `events:${contract}:${address}:${eventName}:${this.normalizeFilter(filter)}:${blockRangeStr}`;
+    return `events:${contract}:${address.toLowerCase()}:${eventName}:${this.normalizeFilter(filter)}:${blockRangeStr}`;
   }
 
   public async getContractEvents(contract: string, address: string, providerIndex: number, eventName: string, filter: Object) {

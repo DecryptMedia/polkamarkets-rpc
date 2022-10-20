@@ -92,7 +92,16 @@ export class EventsWorker extends BaseWorker {
 
       if (writeKeys.length > 0) {
         const writeClient = new RedisService().client;
-        await writeClient.mset(writeKeys as any);
+
+        // writing to redis (using N set calls instead of mset to set a ttl)
+        await Promise.all(writeKeys.map(async (item) => {
+          await writeClient.set(item[0], item[1], 'EX', 60 * 60 * 24 * 2).catch(err => {
+            console.log(err);
+            writeClient.end();
+            throw(err);
+          });
+        }));
+
         writeClient.end();
       }
 
@@ -129,7 +138,7 @@ export class EventsWorker extends BaseWorker {
     if (blockRange['toBlock'] % blockConfig['blockCount'] === 0) {
       const key = polkamarketsContractProvider.blockRangeCacheKey(contract, address, eventName, filter, blockRange);
       const writeClient = new RedisService().client;
-      await writeClient.set(key, JSON.stringify(data));
+      await writeClient.set(key, JSON.stringify(data), 'EX', 60 * 60 * 24 * 2);
       // closing connection after request is finished
       writeClient.end();
     }
