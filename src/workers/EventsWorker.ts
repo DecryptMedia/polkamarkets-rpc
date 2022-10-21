@@ -5,13 +5,20 @@ import { BaseWorker } from './BaseWorker';
 import { PolkamarketsContractProvider } from '@providers/implementations/PolkamarketsContractProvider';
 
 import { Etherscan } from '@services/Etherscan';
-import { RedisService } from '@services/RedisService';
 
+export interface EventsWorkerInput {
+  contract: string,
+  address: string,
+  eventName: string,
+  filter: Object
+  blockRange?: Object,
+  startBlock?: number,
+}
 export class EventsWorker extends BaseWorker {
   static QUEUE_NAME = 'events';
   static concurrency = 5;
 
-  static async run(job: Job<any>): Promise<any> {
+  static async run(job: Job<EventsWorkerInput>): Promise<any> {
     const polkamarketsContractProvider = new PolkamarketsContractProvider();
 
     const { contract, address, eventName, filter, blockRange, startBlock } = job.data;
@@ -22,9 +29,9 @@ export class EventsWorker extends BaseWorker {
     let data;
 
     // if blockRange is not provided, the whole set will try to be fetched
-    const fromBlock = blockRange ? blockRange['fromBlock'] : (startBlock ? startBlock : blockConfig['fromBlock']);
+    const fromBlock = blockRange && blockRange['fromBlock'] || startBlock || (blockConfig && blockConfig['fromBlock']) || 0
     const toBlock = blockRange ? blockRange['toBlock'] : 'latest';
-
+    // return;
     if (useEtherscan) {
       try {
         data = await (
@@ -44,103 +51,88 @@ export class EventsWorker extends BaseWorker {
       }
     }
 
-    if (!blockRange) {
-      const blockRanges = await polkamarketsContractProvider.getBlockRanges();
+    const currentBlockNumber = await polkamarketsContractProvider.getCurrentBlockNumber();
+    const normalizedFilter = polkamarketsContractProvider.normalizeFilter(filter);
 
+    if (!blockRange) {
       if (!data) {
-        // triggering worker with all block ranges
-        blockRanges.forEach((blockRange) => {
+        const blockRanges = await polkamarketsContractProvider.getBlockRanges(currentBlockNumber);
+        // triggering worker with all block ranges, one at a time
+        if (blockRanges.length > 0) {
           EventsWorker.send(
             {
               contract,
               address,
               eventName,
               filter,
-              blockRange
+              blockRange: blockRanges[0],
             }
           );
-        });
+        }
+
+        return;
+      } else {
+        // save the data
+        const query = await polkamarketsContractProvider.getQuery({ address, contract, eventName, normalizedFilter });
+
+        const lastBlock = data.result[data.result.length - 1].blockNumber;
+        const lastBlockToSave = data.maxLimitReached ? lastBlock : currentBlockNumber;
+        await polkamarketsContractProvider.addEventsToQuery({ events: data.result, query, lastBlockToSave });
+
+        if (data.maxLimitReached) {
+          // if max limit is reached, the data will be re-fetched starting from the last block range
+          const startBlock = lastBlock + 1;
+          // const startBlock = (lastBlock - lastBlock % blockConfig['blockCount']);
+
+          // triggering worker with next block range
+          EventsWorker.send(
+            {
+              contract,
+              address,
+              eventName,
+              filter,
+              startBlock
+            },
+            {
+              priority: 1
+            }
+          );
+        }
 
         return;
       }
-
-      const writeBlockRanges = blockRanges.filter((blockRange) => {
-        const inFromBlock = !startBlock || blockRange['fromBlock'] >= startBlock;
-        const inToBlock = !data.maxLimitReached || blockRange['toBlock'] < data.result[data.result.length - 1].blockNumber
-
-        return inFromBlock && inToBlock;
-      });
-
-      data.maxLimitReached
-        ? blockRanges.filter((blockRange) => blockRange['toBlock'] < data.result[data.result.length - 1].blockNumber)
-        : blockRanges;
-
-      // filling up empty redis slots
-      const writeKeys = [];
-
-      writeBlockRanges.forEach((blockRange, index) => {
-        const key = polkamarketsContractProvider.blockRangeCacheKey(contract, address, eventName, filter, blockRange);
-
-        if (blockRange['toBlock'] % blockConfig['blockCount'] === 0) {
-          // key not stored in redis
-          writeKeys.push([
-            key,
-            JSON.stringify(data.result.filter(e => e.blockNumber >= blockRange['fromBlock'] && e.blockNumber <= blockRange['toBlock']))
-          ]);
-        }
-      });
-
-      if (writeKeys.length > 0) {
-        const writeClient = new RedisService().client;
-
-        // writing to redis (using N set calls instead of mset to set a ttl)
-        await Promise.all(writeKeys.map(async (item) => {
-          await writeClient.set(item[0], item[1], 'EX', 60 * 60 * 24 * 2).catch(err => {
-            console.log(err);
-            writeClient.end();
-            throw(err);
-          });
-        }));
-
-        writeClient.end();
+    } else {
+      let result;
+      // if there's no data or limit reached get from contract
+      if (!data || data.maxLimitReached) {
+        result = await polkamarketsContract.getContract().getPastEvents(eventName, {
+          filter,
+          ...blockRange
+        });
+      } else {
+        result = data.result;
       }
 
-      if (data.maxLimitReached) {
-        // if max limit is reached, the data will be re-fetched starting from the last block range
-        const lastBlock = data.result[data.result.length - 1].blockNumber;
-        const startBlock = (lastBlock - lastBlock % blockConfig['blockCount']);
+      // save data
+      const query = await polkamarketsContractProvider.getQuery({ address, contract, eventName, normalizedFilter });
+      await polkamarketsContractProvider.addEventsToQuery({ events: result, query, lastBlockToSave: toBlock });
 
-        // triggering worker with next block range
+      // trigger next block
+      const blockRanges = await polkamarketsContractProvider.getBlockRanges(currentBlockNumber, toBlock + 1);
+      // triggering worker with all block ranges, one at a time
+      if (blockRanges.length > 0) {
         EventsWorker.send(
           {
             contract,
             address,
             eventName,
             filter,
-            startBlock
-          },
-          {
-            priority: 1
+            blockRange: blockRanges[0],
           }
         );
       }
 
       return;
-    }
-
-    if (!data || data.maxLimitReached) {
-      data = await polkamarketsContract.getContract().getPastEvents(eventName, {
-        filter,
-        ...blockRange
-      });
-    }
-
-    if (blockRange['toBlock'] % blockConfig['blockCount'] === 0) {
-      const key = polkamarketsContractProvider.blockRangeCacheKey(contract, address, eventName, filter, blockRange);
-      const writeClient = new RedisService().client;
-      await writeClient.set(key, JSON.stringify(data), 'EX', 60 * 60 * 24 * 2);
-      // closing connection after request is finished
-      writeClient.end();
     }
   }
 }

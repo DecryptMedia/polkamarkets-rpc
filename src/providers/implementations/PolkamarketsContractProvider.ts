@@ -4,6 +4,7 @@ import { ContractProvider } from '@providers/ContractProvider';
 import { Etherscan } from '@services/Etherscan';
 import { Event } from '@models/Event';
 import { Query } from '@models/Query';
+import { EventsWorker } from '../../workers/EventsWorker';
 
 export class PolkamarketsContractProvider implements ContractProvider {
   public polkamarkets: any;
@@ -48,7 +49,7 @@ export class PolkamarketsContractProvider implements ContractProvider {
     }
   }
 
-  public async getBlockRanges(fromBlockInput = null) {
+  public async getBlockRanges(currentBlockNumber, fromBlockInput = null) {
     if (!this.blockConfig) {
       return [];
     }
@@ -60,7 +61,6 @@ export class PolkamarketsContractProvider implements ContractProvider {
     // iterating by block numbers
     let fromBlock = fromBlockInput || this.blockConfig['fromBlock'];
     const blockRanges = [];
-    const currentBlockNumber = await this.polkamarkets.web3.eth.getBlockNumber();
 
     while (fromBlock < currentBlockNumber) {
       let toBlock = (fromBlock - fromBlock % this.blockConfig['blockCount']) + this.blockConfig['blockCount'];
@@ -104,11 +104,6 @@ export class PolkamarketsContractProvider implements ContractProvider {
     return JSON.stringify(normalizedFilter);
   }
 
-  public blockRangeCacheKey(contract: string, address: string, eventName: string, filter: Object, blockRange: Object) {
-    const blockRangeStr = `${blockRange['fromBlock']}-${blockRange['toBlock']}`;
-    return `events:${contract}:${address.toLowerCase()}:${eventName}:${this.normalizeFilter(filter)}:${blockRangeStr}`;
-  }
-
   public async getContractEvents(contract: string, address: string, providerIndex: number, eventName: string, filter: Object) {
     const polkamarketsContract = this.getContract(contract, address, providerIndex);
     let etherscanData;
@@ -127,60 +122,62 @@ export class PolkamarketsContractProvider implements ContractProvider {
       }
     }
 
+    const currentBlockNumber = await this.getCurrentBlockNumber();
+
     const normalizedFilter = this.normalizeFilter(filter);
+
+    // get query on database
+    const query = await this.getQuery({ address, contract, eventName, normalizedFilter });
 
     // successful etherscan call
     if (etherscanData && !etherscanData.maxLimitReached) {
 
       // write to database.
-      const query = await this.getQuery({address, contract, eventName, normalizedFilter});
-      await this.addEventsToQuery({ events: etherscanData.result, query, lastBlockToSave: await this.polkamarkets.web3.eth.getBlockNumber()});
+      await this.addEventsToQuery({ events: etherscanData.result, query, lastBlockToSave: currentBlockNumber });
 
       return etherscanData.result;
     }
 
-    // // filling up empty redis slots (only verifying for first provider)
-    // if (providerIndex === 0 && response.slice(0, -1).filter(r => r === null).length > 1) {
-    //   // some keys are not stored in redis, triggering backfill worker
-    //   EventsWorker.send(
-    //     {
-    //       contract,
-    //       address,
-    //       eventName,
-    //       filter
-    //     }
-    //   );
-    // }
+    // Trigger background job to make to save data
+    if (providerIndex === 0) {
+      EventsWorker.send(
+        {
+          contract,
+          address,
+          eventName,
+          filter
+        }
+      );
+    }
 
-
+    // if limit was reached, let's try to use the saved data and get from etherscan one time
     let events = [];
+    if (etherscanData && etherscanData.maxLimitReached && query.lastBlock) {
+      // limit reached, use saved query and ask for the rest on etherscan
+      events = this.mapDBEvents(query.events);
 
-    // check if query exists on database
-    const query = await this.getQuery({address, contract, eventName, normalizedFilter});
+      try {
+        etherscanData = await (new Etherscan().getEvents(polkamarketsContract, address, query.lastBlock + 1, 'latest', eventName, filter));
+      } catch (err) {
+        // error fetching data from etherscan, taking RPC route
+      }
 
+      if (etherscanData && !etherscanData.maxLimitReached) {
+        return [...events, ...etherscanData.result];
+      }
+    }
+
+    // last fallback
     let blockRanges = [];
+    events = [];
 
-    if (query.events?.length > 0 && query.lastBlock) {
+    if (query.lastBlock) {
       // if query already exists, add those events and iterate rpc blocks after that
-      blockRanges = await this.getBlockRanges(query.lastBlock + 1);
-      events = query.events.map((event) => ({
-        address: event.address,
-        blockHash: event.blockHash,
-        blockNumber: event.blockNumber,
-        logIndex: event.logIndex,
-        removed: event.removed,
-        transactionHash: event.transactionHash,
-        transactionIndex: event.transactionIndex,
-        transactionLogIndex: event.transactionLogIndex,
-        eventId: event.eventId,
-        returnValues: event.returnValues,
-        event: event.event,
-        signature: event.signature,
-        raw: event.raw,
-      }));
+      blockRanges = await this.getBlockRanges(currentBlockNumber, query.lastBlock + 1);
+      events = this.mapDBEvents(query.events);
     } else {
       // if not, iterate rpc blocks
-      blockRanges = await this.getBlockRanges();
+      blockRanges = await this.getBlockRanges(currentBlockNumber);
     }
 
     // save the ones that were not on the database
@@ -211,7 +208,6 @@ export class PolkamarketsContractProvider implements ContractProvider {
     return events;
   }
 
-
   public async addEventsToQuery({ events, query, lastBlockToSave }: { events: any, query: Query, lastBlockToSave: number}) {
     const eventsToAdd: Event[] = [];
     for (const eventData of events) {
@@ -230,22 +226,23 @@ export class PolkamarketsContractProvider implements ContractProvider {
       if (!event) {
         // create
         event = new Event;
-        event.address = eventData.address;
-        event.blockHash = eventData.blockHash;
-        event.blockNumber = eventData.blockNumber;
-        event.logIndex = eventData.logIndex;
-        event.removed = eventData.removed;
-        event.transactionHash = eventData.transactionHash;
-        event.transactionIndex = eventData.transactionIndex;
-        event.transactionLogIndex = eventData.transactionLogIndex;
-        event.eventId = eventData.eventId;
-        event.returnValues = eventData.returnValues;
-        event.event = eventData.event;
-        event.signature = eventData.signature;
-        event.raw = eventData.raw;
-
-        await event.save();
       }
+
+      event.address = eventData.address;
+      event.blockHash = eventData.blockHash;
+      event.blockNumber = eventData.blockNumber;
+      event.logIndex = eventData.logIndex;
+      event.removed = eventData.removed;
+      event.transactionHash = eventData.transactionHash;
+      event.transactionIndex = eventData.transactionIndex;
+      event.transactionLogIndex = eventData.transactionLogIndex;
+      event.eventId = eventData.eventId;
+      event.returnValues = eventData.returnValues;
+      event.event = eventData.event;
+      event.signature = eventData.signature;
+      event.raw = eventData.raw;
+
+      await event.save();
 
       eventsToAdd.push(event);
     }
@@ -277,5 +274,32 @@ export class PolkamarketsContractProvider implements ContractProvider {
     }
 
     return query;
+  }
+
+  public mapDBEvents(events: Event[]): any[] {
+    return events.map((event) => ({
+      address: event.address,
+      blockHash: event.blockHash,
+      blockNumber: event.blockNumber,
+      logIndex: event.logIndex,
+      removed: event.removed,
+      transactionHash: event.transactionHash,
+      transactionIndex: event.transactionIndex,
+      transactionLogIndex: event.transactionLogIndex,
+      eventId: event.eventId,
+      returnValues: event.returnValues,
+      event: event.event,
+      signature: event.signature,
+      raw: event.raw,
+    }));
+  }
+
+  public async getCurrentBlockNumber(): Promise<number> {
+
+    if (!this.polkamarkets) {
+      this.initializePolkamarkets(0);
+    }
+
+    return await this.polkamarkets.web3.eth.getBlockNumber();
   }
 }
