@@ -75,7 +75,7 @@ export class Etherscan {
       address: data.address,
       blockHash: '',
       blockNumber: parseInt(data.blockNumber),
-      logIndex: parseInt(data.logIndex),
+      logIndex: parseInt(data.logIndex) || 0,
       removed: false,
       transactionHash: data.transactionHash,
       transactionIndex: parseInt(data.transactionIndex),
