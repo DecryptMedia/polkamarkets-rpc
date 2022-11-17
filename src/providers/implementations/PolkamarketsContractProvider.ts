@@ -237,33 +237,45 @@ export class PolkamarketsContractProvider implements ContractProvider {
         continue;
       }
 
-      let event = await Event.findOne({
+      const [event, created] = await Event.findOrCreate({
         where: {
           transactionHash: eventData.transactionHash,
           logIndex: eventData.logIndex,
+        },
+        defaults: {
+          address: eventData.address,
+          blockHash: eventData.blockHash,
+          blockNumber: eventData.blockNumber,
+          removed: eventData.removed,
+          transactionIndex: eventData.transactionIndex,
+          transactionLogIndex: eventData.transactionLogIndex,
+          eventId: eventData.eventId,
+          returnValues: eventData.returnValues,
+          event: eventData.event,
+          signature: eventData.signature,
+          raw: eventData.raw,
         }
       });
 
-      if (!event) {
-        // create
-        event = new Event;
+
+      // if already exists, just update the fields
+      if (!created) {
+        event.address = eventData.address;
+        event.blockHash = eventData.blockHash;
+        event.blockNumber = eventData.blockNumber;
+        event.logIndex = eventData.logIndex;
+        event.removed = eventData.removed;
+        event.transactionHash = eventData.transactionHash;
+        event.transactionIndex = eventData.transactionIndex;
+        event.transactionLogIndex = eventData.transactionLogIndex;
+        event.eventId = eventData.eventId;
+        event.returnValues = eventData.returnValues;
+        event.event = eventData.event;
+        event.signature = eventData.signature;
+        event.raw = eventData.raw;
+
+        await event.save();
       }
-
-      event.address = eventData.address;
-      event.blockHash = eventData.blockHash;
-      event.blockNumber = eventData.blockNumber;
-      event.logIndex = eventData.logIndex;
-      event.removed = eventData.removed;
-      event.transactionHash = eventData.transactionHash;
-      event.transactionIndex = eventData.transactionIndex;
-      event.transactionLogIndex = eventData.transactionLogIndex;
-      event.eventId = eventData.eventId;
-      event.returnValues = eventData.returnValues;
-      event.event = eventData.event;
-      event.signature = eventData.signature;
-      event.raw = eventData.raw;
-
-      await event.save();
 
       eventsToAdd.push(event);
     }
@@ -275,7 +287,7 @@ export class PolkamarketsContractProvider implements ContractProvider {
   }
 
   public async getQuery({address, contract, eventName, normalizedFilter}: {address: string, contract: string, eventName: string, normalizedFilter: string} ): Promise<Query> {
-    let query = await Query.findOne({
+    const [query, created] = await Query.findOrCreate({
       where: {
         address: address.toLowerCase(),
         contract,
@@ -283,15 +295,6 @@ export class PolkamarketsContractProvider implements ContractProvider {
         filter: normalizedFilter,
       },
     });
-
-    if (!query) {
-      query = new Query;
-      query.address = address.toLowerCase();
-      query.contract = contract;
-      query.eventName = eventName;
-      query.filter = normalizedFilter;
-      await query.save();
-    }
 
     return query;
   }
