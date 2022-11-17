@@ -5,6 +5,7 @@ import { Etherscan } from '@services/Etherscan';
 import { Event } from '@models/Event';
 import { Query } from '@models/Query';
 import { EventsWorker } from '../../workers/EventsWorker';
+import { FindOptions } from 'sequelize';
 
 export class PolkamarketsContractProvider implements ContractProvider {
   public polkamarkets: any;
@@ -104,7 +105,7 @@ export class PolkamarketsContractProvider implements ContractProvider {
     return JSON.stringify(normalizedFilter);
   }
 
-  public async getContractEvents(contract: string, address: string, providerIndex: number, eventName: string, filter: Object) {
+  public async getContractEvents(contract: string, address: string, providerIndex: number, eventName: string, filter: Object, page: number, perPage: number) {
     const polkamarketsContract = this.getContract(contract, address, providerIndex);
     let etherscanData;
 
@@ -114,9 +115,31 @@ export class PolkamarketsContractProvider implements ContractProvider {
       return events;
     }
 
+    let hasPagination = false;
+    if (page && perPage) {
+      hasPagination = true;
+    }
+
+    // get query on database
+    const normalizedFilter = this.normalizeFilter(filter);
+    const query = await this.getQuery({ address, contract, eventName, normalizedFilter });
+
+    let paginatedEvents = [];
+
     if (this.useEtherscan) {
+      let fromBlock = this.blockConfig['fromBlock'];
+
+      if (hasPagination && query.lastBlock) {
+        const events = await this.getEvents({query, page, perPage});
+        paginatedEvents = this.mapDBEvents(events);
+        if (paginatedEvents.length >= perPage) {
+          return paginatedEvents;
+        }
+        fromBlock = query.lastBlock + 1;
+      }
+
       try {
-        etherscanData = await (new Etherscan().getEvents(polkamarketsContract, address, this.blockConfig['fromBlock'], 'latest', eventName, filter));
+        etherscanData = await (new Etherscan().getEvents(polkamarketsContract, address, fromBlock, 'latest', eventName, filter));
       } catch (err) {
         // error fetching data from etherscan, taking RPC route
       }
@@ -124,21 +147,19 @@ export class PolkamarketsContractProvider implements ContractProvider {
 
     const currentBlockNumber = await this.getCurrentBlockNumber();
 
-    const normalizedFilter = this.normalizeFilter(filter);
-
-    // get query on database
-    const query = await this.getQuery({ address, contract, eventName, normalizedFilter });
-
     // successful etherscan call
     if (etherscanData && !etherscanData.maxLimitReached) {
 
       // write to database.
       await this.addEventsToQuery({ events: etherscanData.result, query, lastBlockToSave: currentBlockNumber });
 
+      if (hasPagination) {
+        return paginatedEvents.concat(etherscanData.result.slice(0, perPage - paginatedEvents.length))
+      }
       return etherscanData.result;
     }
 
-    // Trigger background job to make to save data
+    // Trigger background job to save data
     if (providerIndex === 0) {
       EventsWorker.send(
         {
@@ -152,9 +173,9 @@ export class PolkamarketsContractProvider implements ContractProvider {
 
     // if limit was reached, let's try to use the saved data and get from etherscan one time
     let events = [];
-    if (etherscanData && etherscanData.maxLimitReached && query.lastBlock) {
+    if (etherscanData && etherscanData.maxLimitReached && query.lastBlock && !hasPagination) {
       // limit reached, use saved query and ask for the rest on etherscan
-      events = this.mapDBEvents(query.events);
+      events = this.mapDBEvents(await this.getEvents({query}));
 
       try {
         etherscanData = await (new Etherscan().getEvents(polkamarketsContract, address, query.lastBlock + 1, 'latest', eventName, filter));
@@ -174,7 +195,7 @@ export class PolkamarketsContractProvider implements ContractProvider {
     if (query.lastBlock) {
       // if query already exists, add those events and iterate rpc blocks after that
       blockRanges = await this.getBlockRanges(currentBlockNumber, query.lastBlock + 1);
-      events = this.mapDBEvents(query.events);
+      events = this.mapDBEvents(await this.getEvents({query}));
     } else {
       // if not, iterate rpc blocks
       blockRanges = await this.getBlockRanges(currentBlockNumber);
@@ -205,7 +226,7 @@ export class PolkamarketsContractProvider implements ContractProvider {
       events = events.concat(blockEvents);
     }
 
-    return events;
+    return hasPagination ? events.slice((page - 1) * perPage, perPage * page) : events;
   }
 
   public async addEventsToQuery({ events, query, lastBlockToSave }: { events: any, query: Query, lastBlockToSave: number}) {
@@ -261,7 +282,6 @@ export class PolkamarketsContractProvider implements ContractProvider {
         eventName,
         filter: normalizedFilter,
       },
-      include: [Event]
     });
 
     if (!query) {
@@ -274,6 +294,22 @@ export class PolkamarketsContractProvider implements ContractProvider {
     }
 
     return query;
+  }
+
+  public getEvents({ query, page, perPage }: { query: Query, page?: number, perPage?: number}): Promise<Event[]> {
+    const findOptions: FindOptions = {
+      order: [
+        ['blockNumber', 'asc'],
+        ['logIndex', 'asc'],
+      ]
+    };
+
+    if (page && perPage) {
+      findOptions.limit = perPage;
+      findOptions.offset = (page - 1) * perPage;
+    }
+
+    return query.$get('events', findOptions);
   }
 
   public mapDBEvents(events: Event[]): any[] {

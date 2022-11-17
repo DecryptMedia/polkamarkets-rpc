@@ -8,7 +8,7 @@ export class EventsController {
   constructor(private eventsUseCase: EventsUseCase) {}
 
   async handle(request: Request, response: Response): Promise<Response> {
-    const { contract, eventName, filter, address } = request.query;
+    const { contract, eventName, filter, address, page, perPage } = request.query;
 
     for(let providerIndex = 0; providerIndex < this.eventsUseCase.contractProvider.web3Providers.length; providerIndex++) {
       try {
@@ -17,7 +17,9 @@ export class EventsController {
           eventName,
           address,
           providerIndex,
-          filter: filter ? JSON.parse(filter as string) : {}
+          filter: filter ? JSON.parse(filter as string) : {},
+          page: +page,
+          perPage: +perPage,
         } as EventsDTO);
 
         if (typeof data === 'boolean') {
