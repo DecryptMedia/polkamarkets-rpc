@@ -45,6 +45,10 @@ export class PolkamarketsContractProvider implements ContractProvider {
       return this.polkamarkets.getAchievementsContract({ contractAddress: address });
     } else if (contract === 'voting') {
       return this.polkamarkets.getVotingContract({ contractAddress: address });
+    } else if (contract === 'arbitration') {
+      return this.polkamarkets.getArbitrationContract({ contractAddress: address });
+    } else if (contract === 'arbitrationProxy') {
+      return this.polkamarkets.getArbitrationProxyContract({ contractAddress: address });
     } else {
       // this should never happen - should be overruled by the controller
       throw `'Contract ${contract} is not defined`;
