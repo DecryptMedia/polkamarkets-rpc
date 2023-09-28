@@ -39,12 +39,14 @@ export class Etherscan {
 
     for (let i = 0; i < attempts; i++) {
       try {
+        console.log(`Etherscan :: Fetching events from ${etherscanUrl}`);
         ({ data } = await axios.get(etherscanUrl));
         // error fetching data
         if (data.status === '0' && data.message !== 'No records found') throw (data.result);
 
         break;
       } catch (err) {
+        console.log(`Etherscan :: Error fetching events from ${etherscanUrl}`);
         if (i === attempts - 1) {
           throw err;
         }

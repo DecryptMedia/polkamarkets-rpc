@@ -1,8 +1,8 @@
 {
-  "name": "bepro-api",
+  "name": "polkamarkets-rpc",
   "version": "1.0.0",
   "main": "index.js",
-  "repository": "git@github.com:Polkamarkets/bepro-api.git",
+  "repository": "git@github.com:Polkamarkets/polkamarkets-rpc.git",
   "license": "MIT",
   "scripts": {
     "build": "babel src --extensions \".js,.ts\" --out-dir dist --copy-files --no-copy-ignored",

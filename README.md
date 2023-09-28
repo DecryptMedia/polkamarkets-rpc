@@ -1,6 +1,6 @@
-# bepro-api
+# polkamarkets-rpc
 
-HTTP web3 wrapper for [`bepro-js`](https://github.com/bepronetwork/bepro-js/tree/feature/prediction-markets)
+HTTP web3 wrapper for [`polkamarkets-js`](https://github.com/polkamarkets/polkamarkets-js)
 
 ## Installation
 
@@ -13,7 +13,7 @@ yarn dev
 
 ## Usage
 
-[Smart Contract](https://github.com/bepronetwork/bepro-js/blob/feature/prediction-markets/contracts/PredictionMarket.sol) Method Queries:
+[Smart Contract](https://github.com/Polkamarkets/polkamarkets-js/tree/main/contracts/PredictionMarket.sol) Method Queries:
 
 ```
 // method - method name (example: getMarketData)
@@ -23,7 +23,7 @@ yarn dev
 http://localhost:3333/call?contract=predictionMarket&method=${method}&args=${args}&address=${contractAddress}
 ```
 
-[Smart Contract](https://github.com/bepronetwork/bepro-js/blob/feature/prediction-markets/contracts/PredictionMarket.sol) Event Queries:
+[Smart Contract](https://github.com/Polkamarkets/polkamarkets-js/tree/main/contracts/PredictionMarket.sol) Event Queries:
 
 ```
 // eventName - event name (example: MarketActionTx)
@@ -45,4 +45,4 @@ Contributions are welcomed but we ask to red existing code guidelines, specially
 
 The usage of ETH in all methods or params means using the native currency of that blockchain, example BSC in Binance Chain would still be nominated as ETH
 
-[1]: https://github.com/bepronetwork/bepro-js/blob/master/CONTRIBUTING.md
+[1]: https://github.com/polkamarkets/polkamarkets-js/blob/master/CONTRIBUTING.md
