@@ -1,0 +1,5 @@
+env:
+  - name: ETHERSCAN_URL
+    value: https://api-sepolia.arbiscan.io/api
+  - name: REDIS_URL
+    value: redis://redis.redis-operator:6379

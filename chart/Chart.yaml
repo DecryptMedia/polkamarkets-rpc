@@ -1,0 +1,7 @@
+apiVersion: v2
+name: polkamarkets-rpc
+version: "1.0.0"
+home: https://github.com/DecryptMedia/polkamarkets-rpc
+sources:
+  - https://github.com/Polkamarkets/polkamarkets-rpc
+appVersion: "3.0.0"

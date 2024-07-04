@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-deployment
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chart.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: rpc
+          image: {{ .Values.rpcImage }}
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3333
+          env:
+            {{- toYaml .Values.env | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-secret 
